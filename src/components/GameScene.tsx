@@ -13,7 +13,7 @@ export default function GameScene() {
   const keysRef = useRef<{ [key: string]: boolean }>({});
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
   const actionsRef = useRef<{ [key: string]: THREE.AnimationAction }>({});
-  const currentActionRef = useRef<string>("idle");
+  const currentActionRef = useRef<string>("sitting");
   const clockRef = useRef<THREE.Clock>(new THREE.Clock());
   const isAttackingRef = useRef<boolean>(false);
   const zombieRef = useRef<THREE.Group | null>(null);
@@ -22,9 +22,13 @@ export default function GameScene() {
   const zombieStateRef = useRef<string>("alive"); // "alive" or "dead"
   const glowingOrbRef = useRef<THREE.Mesh | null>(null);
   const treesRef = useRef<THREE.Group[]>([]);
+  const bonfireRef = useRef<THREE.Group | null>(null);
   const [showPickupPrompt, setShowPickupPrompt] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [loadingProgress, setLoadingProgress] = useState(0);
+  const [isSitting, setIsSitting] = useState(true);
+  const [showStandPrompt, setShowStandPrompt] = useState(false);
+  const isStandingUpRef = useRef<boolean>(false);
 
   useEffect(() => {
     if (!mountRef.current) return;
@@ -33,32 +37,35 @@ export default function GameScene() {
     const scene = new THREE.Scene();
     sceneRef.current = scene;
 
-    // Load skybox texture with reduced brightness and orange tint
-    const exrLoader = new EXRLoader();
-    exrLoader.load(
-      "/assets/puresky_skybox.exr",
+    // Load apocalypse cube map skybox
+    const cubeLoader = new THREE.CubeTextureLoader();
+
+    const urls = [
+      "/assets/ApocalypseSkybox/vz_apocalypse_right.png", // positive x
+      "/assets/ApocalypseSkybox/vz_apocalypse_left.png", // negative x
+      "/assets/ApocalypseSkybox/vz_apocalypse_up.png", // positive y
+      "/assets/ApocalypseSkybox/vz_apocalypse_down.png", // negative y
+      "/assets/ApocalypseSkybox/vz_apocalypse_front.png", // positive z
+      "/assets/ApocalypseSkybox/vz_apocalypse_back.png", // negative z
+    ];
+
+    cubeLoader.load(
+      urls,
       (texture) => {
-        texture.mapping = THREE.EquirectangularReflectionMapping;
+        // Apply the cube texture as background and environment
+        scene.background = texture;
+        scene.environment = texture;
 
-        // Create a tone mapping and color adjustment for the skybox
-        const pmremGenerator = new THREE.PMREMGenerator(renderer);
-        const envMap = pmremGenerator.fromEquirectangular(texture).texture;
+        // Reduce environment intensity for darker atmosphere
+        scene.backgroundIntensity = 0.4; // Slightly brighter than before
+        scene.environmentIntensity = 0.3; // Reduce environment lighting
 
-        // Apply the processed environment map
-        scene.background = envMap;
-        scene.environment = envMap;
-
-        // Reduce environment intensity and add orange tint
-        scene.backgroundIntensity = 0.3; // Reduce brightness
-        scene.environmentIntensity = 0.4; // Reduce environment lighting
-
-        pmremGenerator.dispose();
         updateLoadingProgress();
-        console.log("Skybox loaded successfully with orange tint");
+        console.log("Apocalypse skybox loaded successfully");
       },
       undefined,
       (error) => {
-        console.error("Error loading skybox:", error);
+        console.error("Error loading apocalypse skybox:", error);
         // Fallback to dark orange background
         scene.background = new THREE.Color(0.15, 0.08, 0.04);
         updateLoadingProgress(); // Still count as loaded even if failed
@@ -133,14 +140,17 @@ export default function GameScene() {
         actions[clip.name] = action;
       });
 
-      console.log(animations);
-
       actionsRef.current = actions;
 
-      // Start with idle animation
-      if (actions.idle) {
-        actions.idle.play();
-        currentActionRef.current = "idle";
+      if (actions.sitting) {
+        actions.sitting.play();
+        currentActionRef.current = "sitting";
+        console.log("Starting with sitting animation");
+      } else {
+        console.log(
+          "Sitting animation not found, available animations:",
+          Object.keys(actions)
+        );
       }
 
       console.log("Available animations:", Object.keys(actions));
@@ -149,6 +159,14 @@ export default function GameScene() {
     const playAnimation = (animationName: string, loop: boolean = true) => {
       const actions = actionsRef.current;
       const currentAction = currentActionRef.current;
+
+      // Prevent any animation changes while standing up (except allowing standingUp itself)
+      if (isStandingUpRef.current && animationName !== "standingUp") {
+        console.log(
+          `Animation ${animationName} blocked - standing up in progress`
+        );
+        return;
+      }
 
       if (actions[animationName] && currentAction !== animationName) {
         // Fade out current animation
@@ -172,9 +190,9 @@ export default function GameScene() {
     const fbxLoader = new FBXLoader();
     const playerGroup = new THREE.Group();
     let loadedAnimations = 0;
-    const totalAnimations = 6;
+    const totalAnimations = 3; // sitting + standing up + attack (load others later)
     const animationClips: THREE.AnimationClip[] = [];
-    const totalAssets = 9; // 6 player animations + zombie + trees + skybox
+    const totalAssets = 6; // 3 initial animations + zombie + trees + skybox + bonfire
     let loadedAssets = 0;
 
     const updateLoadingProgress = () => {
@@ -183,7 +201,13 @@ export default function GameScene() {
       setLoadingProgress(progress);
 
       if (loadedAssets >= totalAssets) {
-        setTimeout(() => setIsLoading(false), 500); // Small delay for smooth transition
+        setTimeout(() => {
+          setIsLoading(false);
+          // Show stand prompt after loading finishes
+          setTimeout(() => {
+            setShowStandPrompt(true);
+          }, 2000); // 2 seconds after loading completes
+        }, 500); // Small delay for smooth transition
       }
     };
 
@@ -226,8 +250,14 @@ export default function GameScene() {
 
           // Store animation with proper name
           if (fbx.animations.length > 0) {
+            const originalClip = fbx.animations[0];
+            console.log(
+              `Original animation name for ${animationName}:`,
+              originalClip.name
+            );
+
             const renamedClip = renameAnimationClip(
-              fbx.animations[0],
+              originalClip,
               animationName
             );
             animationClips.push(renamedClip);
@@ -251,13 +281,10 @@ export default function GameScene() {
       );
     };
 
-    // Load all animations
-    loadAnimation("/assets/S&SIdle.fbx", "idle", true); // Base model
-    loadAnimation("/assets/S&SAttack.fbx", "attack");
-    loadAnimation("/assets/S&SWalkForward.fbx", "walkForward");
-    loadAnimation("/assets/S&SWalkBack.fbx", "walkBack");
-    loadAnimation("/assets/S&SStrafeLeft.fbx", "strafeLeft");
-    loadAnimation("/assets/S&SStrafeRight.fbx", "strafeRight");
+    // Load initial animations only (sitting experience)
+    loadAnimation("/assets/SittingIdle.fbx", "sitting", true);
+    loadAnimation("/assets/StandingUp.fbx", "standingUp");
+    loadAnimation("/assets/S&SAttack.fbx", "attack"); // Keep attack for sitting combat
 
     // Load zombie model and animations
     const loadZombie = () => {
@@ -517,6 +544,54 @@ export default function GameScene() {
 
     loadTrees();
 
+    // Load bonfire
+    const loadBonfire = () => {
+      const textureLoader = new THREE.TextureLoader();
+
+      fbxLoader.load(
+        "/assets/bonfire/source/bonefire.fbx",
+        (fbx) => {
+          // Load bonfire texture
+          const bonfireTexture = textureLoader.load(
+            "/assets/bonfire/textures/Bonfire_D.png"
+          );
+
+          // Apply texture and setup material
+          fbx.traverse((child) => {
+            if (child instanceof THREE.Mesh) {
+              child.castShadow = true;
+              child.receiveShadow = true;
+
+              if (child.material) {
+                const material = new THREE.MeshStandardMaterial({
+                  map: bonfireTexture,
+                  color: 0xffffff,
+                });
+                child.material = material;
+              }
+            }
+          });
+
+          // Scale and position the bonfire
+          fbx.scale.setScalar(0.01);
+          fbx.position.set(0, 0, -3); // Position in front of where player will sit
+
+          scene.add(fbx);
+          bonfireRef.current = fbx;
+          updateLoadingProgress();
+
+          console.log("Bonfire loaded and placed");
+        },
+        undefined,
+        (error) => {
+          console.error("Error loading bonfire:", error);
+          updateLoadingProgress(); // Still count as loaded even if failed
+        }
+      );
+    };
+
+    loadBonfire();
+
     playerGroup.position.set(0, 0, 0);
     scene.add(playerGroup);
     playerRef.current = playerGroup;
@@ -624,9 +699,79 @@ export default function GameScene() {
       }
     };
 
+    // Function to load movement animations after standing up
+    const loadMovementAnimations = () => {
+      console.log("Loading movement animations...");
+
+      const movementAnimations = [
+        { file: "/assets/S&SIdle.fbx", name: "idle" },
+        { file: "/assets/S&SWalkForward.fbx", name: "walkForward" },
+        { file: "/assets/S&SWalkBack.fbx", name: "walkBack" },
+        { file: "/assets/S&SStrafeLeft.fbx", name: "strafeLeft" },
+        { file: "/assets/S&SStrafeRight.fbx", name: "strafeRight" },
+      ];
+
+      let loadedMovementCount = 0;
+      const totalMovementAnimations = movementAnimations.length;
+
+      movementAnimations.forEach(({ file, name }) => {
+        fbxLoader.load(
+          file,
+          (fbx) => {
+            if (fbx.animations.length > 0) {
+              const renamedClip = renameAnimationClip(fbx.animations[0], name);
+
+              // Add to existing mixer
+              if (mixerRef.current) {
+                const action = mixerRef.current.clipAction(renamedClip);
+                actionsRef.current[name] = action;
+              }
+            }
+
+            loadedMovementCount++;
+            console.log(
+              `${name} animation loaded (${loadedMovementCount}/${totalMovementAnimations})`
+            );
+          },
+          undefined,
+          (error) => console.error(`Error loading ${name} animation:`, error)
+        );
+      });
+    };
+
+    // Function to stand up
+    const standUp = () => {
+      if (!isSitting || isStandingUpRef.current) return;
+
+      setIsSitting(false);
+      setShowStandPrompt(false);
+      isStandingUpRef.current = true; // Block other animations
+
+      // Play standing up animation at 50% speed
+      playAnimation("standingUp", false);
+
+      // Load movement animations while standing up
+      loadMovementAnimations();
+
+      // After standing animation, movement animations should be ready
+      setTimeout(() => {
+        isStandingUpRef.current = false; // Allow other animations again
+        if (actionsRef.current.idle) {
+          playAnimation("idle");
+        }
+      }, 4000); // 4 seconds because animation is at 50% speed (2000ms * 2)
+
+      console.log("Standing up and loading movement animations!");
+    };
+
     // Input controls
     const handleKeyDown = (event: KeyboardEvent) => {
       keysRef.current[event.code] = true;
+
+      // Handle Space key for standing up
+      if (event.code === "Space" && isSitting) {
+        standUp();
+      }
 
       // Handle E key for pickup
       if (event.code === "KeyE" && checkOrbProximity()) {
@@ -639,8 +784,12 @@ export default function GameScene() {
     };
 
     const handleMouseClick = (event: MouseEvent) => {
-      if (event.button === 0 && !isAttackingRef.current) {
-        // Left click - only if not already attacking
+      if (
+        event.button === 0 &&
+        !isAttackingRef.current &&
+        !isStandingUpRef.current
+      ) {
+        // Left click - only if not already attacking and not standing up
         isAttackingRef.current = true;
         playAnimation("attack", false);
 
@@ -735,7 +884,7 @@ export default function GameScene() {
         let currentMovement = "";
 
         if (!isAttackingRef.current) {
-          // Only allow movement if not attacking
+          // Only allow movement if not attacking, not sitting, and not standing up
           if (keysRef.current["KeyW"] || keysRef.current["ArrowUp"]) {
             player.position.z -= moveSpeed;
             moved = true;
@@ -888,9 +1037,31 @@ export default function GameScene() {
         <h3 className="text-lg font-bold mb-2">Controls:</h3>
         <p>WASD or Arrow Keys - Move</p>
         <p>Left Click - Attack</p>
-        <p className="text-sm text-orange-300 mt-1">
-          Get close to zombie and attack to register hits!
-        </p>
+        {isSitting && <p className="text-orange-300">Space - Stand Up</p>}
+      </div>
+
+      {/* Stand Up Prompt */}
+      <div
+        className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none"
+        style={{
+          background: `url('/assets/DarkFantasyUi/Popup Screen/Blurry_popup x2.png') no-repeat center center`,
+          backgroundSize: "contain",
+          width: "400px",
+          height: "150px",
+          display: showStandPrompt ? "flex" : "none",
+          alignItems: "center",
+          justifyContent: "center",
+          animation: showStandPrompt ? "fadeInOut 3s infinite" : "none",
+        }}
+      >
+        <div className="text-center">
+          <div className="text-white text-lg font-bold mb-1 drop-shadow-lg">
+            Press Space to Stand
+          </div>
+          <div className="text-orange-300 text-sm drop-shadow-lg">
+            Begin your journey
+          </div>
+        </div>
       </div>
 
       {/* Pickup Prompt */}
