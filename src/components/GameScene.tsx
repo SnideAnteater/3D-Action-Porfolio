@@ -431,18 +431,20 @@ export default function GameScene() {
               }
             });
 
-            // Create multiple oak tree instances
+            // Create multiple oak tree instances in a straight corridor pattern
             for (let i = 0; i < 8; i++) {
               const oakClone = fbx.clone();
               oakClone.scale.setScalar(0.05 + Math.random() * 0.03); // Random scale
 
-              // Random position around the edges of the scene
-              const angle = (i / 8) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
-              const distance = 40 + Math.random() * 40;
+              // Position trees in a straight corridor pattern
+              const side = i % 2 === 0 ? -1 : 1; // Alternate left and right sides
+              const distance = Math.floor(i / 2) * 20 + 30; // Spacing along the path
+              const corridorWidth = 15; // Width of the corridor
+
               oakClone.position.set(
-                Math.cos(angle) * distance,
+                side * corridorWidth, // Left or right side of corridor
                 0,
-                Math.sin(angle) * distance
+                -distance // Along the Z-axis creating a straight path
               );
 
               oakClone.rotation.y = Math.random() * Math.PI * 2; // Random rotation
@@ -511,18 +513,20 @@ export default function GameScene() {
               }
             });
 
-            // Create multiple pine tree instances
+            // Create multiple pine tree instances in a straight corridor pattern
             for (let i = 0; i < 12; i++) {
               const pineClone = fbx.clone();
               pineClone.scale.setScalar(0.03 + Math.random() * 0.02); // Random scale
 
-              // Random position scattered around the scene
-              const angle = Math.random() * Math.PI * 2;
-              const distance = 25 + Math.random() * 60;
+              // Position pine trees to line the corridor more densely
+              const side = i % 2 === 0 ? -1 : 1; // Alternate left and right sides
+              const distance = Math.floor(i / 2) * 15 + 20; // Closer spacing than oak trees
+              const corridorWidth = 20; // Slightly wider for pine trees
+
               pineClone.position.set(
-                Math.cos(angle) * distance,
+                side * corridorWidth, // Left or right side of corridor
                 0,
-                Math.sin(angle) * distance
+                -distance // Along the Z-axis creating a straight path
               );
 
               pineClone.rotation.y = Math.random() * Math.PI * 2; // Random rotation
@@ -699,6 +703,25 @@ export default function GameScene() {
       }
     };
 
+    // Function to check collision with trees
+    const checkTreeCollision = (newPosition: THREE.Vector3) => {
+      const playerRadius = 1.5; // Player collision radius
+      const treeRadius = 2.0; // Tree collision radius (cylinder)
+      
+      for (const tree of treesRef.current) {
+        const treePosition = tree.position;
+        const distance = Math.sqrt(
+          Math.pow(newPosition.x - treePosition.x, 2) +
+          Math.pow(newPosition.z - treePosition.z, 2)
+        );
+        
+        if (distance < (playerRadius + treeRadius)) {
+          return true; // Collision detected
+        }
+      }
+      return false; // No collision
+    };
+
     // Function to load movement animations after standing up
     const loadMovementAnimations = () => {
       console.log("Loading movement animations...");
@@ -787,7 +810,8 @@ export default function GameScene() {
       if (
         event.button === 0 &&
         !isAttackingRef.current &&
-        !isStandingUpRef.current
+        !isStandingUpRef.current &&
+        !isSitting
       ) {
         // Left click - only if not already attacking and not standing up
         isAttackingRef.current = true;
@@ -885,25 +909,43 @@ export default function GameScene() {
 
         if (!isAttackingRef.current) {
           // Only allow movement if not attacking, not sitting, and not standing up
+          const currentPosition = player.position.clone();
+          
           if (keysRef.current["KeyW"] || keysRef.current["ArrowUp"]) {
-            player.position.z -= moveSpeed;
-            moved = true;
-            currentMovement = "walkForward";
+            const newPosition = currentPosition.clone();
+            newPosition.z -= moveSpeed;
+            if (!checkTreeCollision(newPosition)) {
+              player.position.z -= moveSpeed;
+              moved = true;
+              currentMovement = "walkForward";
+            }
           }
           if (keysRef.current["KeyS"] || keysRef.current["ArrowDown"]) {
-            player.position.z += moveSpeed;
-            moved = true;
-            currentMovement = "walkBack";
+            const newPosition = currentPosition.clone();
+            newPosition.z += moveSpeed;
+            if (!checkTreeCollision(newPosition)) {
+              player.position.z += moveSpeed;
+              moved = true;
+              currentMovement = "walkBack";
+            }
           }
           if (keysRef.current["KeyA"] || keysRef.current["ArrowLeft"]) {
-            player.position.x -= moveSpeed;
-            moved = true;
-            currentMovement = "strafeLeft";
+            const newPosition = currentPosition.clone();
+            newPosition.x -= moveSpeed;
+            if (!checkTreeCollision(newPosition)) {
+              player.position.x -= moveSpeed;
+              moved = true;
+              currentMovement = "strafeLeft";
+            }
           }
           if (keysRef.current["KeyD"] || keysRef.current["ArrowRight"]) {
-            player.position.x += moveSpeed;
-            moved = true;
-            currentMovement = "strafeRight";
+            const newPosition = currentPosition.clone();
+            newPosition.x += moveSpeed;
+            if (!checkTreeCollision(newPosition)) {
+              player.position.x += moveSpeed;
+              moved = true;
+              currentMovement = "strafeRight";
+            }
           }
         }
 
